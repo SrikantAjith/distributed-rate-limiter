@@ -1,6 +1,6 @@
 package com.srikant.ratelimiter.filter;
 
-import com.srikant.ratelimiter.limiter.RateLimiter;
+import com.srikant.ratelimiter.limiter.RedisRateLimiter;
 import com.srikant.ratelimiter.model.RateLimitResult;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -14,9 +14,9 @@ import java.io.IOException;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    private final RateLimiter rateLimiter;
 
-    public RateLimitFilter(RateLimiter rateLimiter) {
+    private final RedisRateLimiter rateLimiter;
+    public RateLimitFilter(RedisRateLimiter rateLimiter) {
         this.rateLimiter = rateLimiter;
     }
 
