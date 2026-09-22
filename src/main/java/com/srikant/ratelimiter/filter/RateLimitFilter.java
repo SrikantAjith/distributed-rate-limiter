@@ -35,8 +35,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
             return;
         }
 
-        RateLimitResult result = rateLimiter.check(clientId);
+        String endpoint = request.getRequestURI();
 
+        RateLimitResult result =
+                rateLimiter.check(clientId, endpoint);
         response.setHeader(
                 "X-RateLimit-Limit",
                 String.valueOf(result.getLimit())

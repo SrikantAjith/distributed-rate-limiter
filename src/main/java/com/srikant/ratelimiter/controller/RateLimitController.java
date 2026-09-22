@@ -13,4 +13,9 @@ public class RateLimitController {
     public ResponseEntity<String> test() {
         return ResponseEntity.ok("Request allowed");
     }
+
+    @GetMapping("/products")
+    public ResponseEntity<String> products() {
+        return ResponseEntity.ok("Products response");
+    }
 }
