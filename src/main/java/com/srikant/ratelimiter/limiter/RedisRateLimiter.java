@@ -3,8 +3,15 @@ package com.srikant.ratelimiter.limiter;
 import com.srikant.ratelimiter.config.EndpointRateLimit;
 import com.srikant.ratelimiter.config.RateLimitProperties;
 import com.srikant.ratelimiter.model.RateLimitResult;
+
+import org.springframework.core.io.ClassPathResource;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -14,62 +21,7 @@ public class RedisRateLimiter {
 
     private final StringRedisTemplate redisTemplate;
     private final RateLimitProperties properties;
-
-    private static final String RATE_LIMIT_SCRIPT = """
-            local key = KEYS[1]
-            local now = tonumber(ARGV[1])
-            local window = tonumber(ARGV[2])
-            local limit = tonumber(ARGV[3])
-
-            local windowStart = now - window
-
-            -- Remove expired requests
-            while true do
-                local oldest = redis.call('LINDEX', key, 0)
-
-                if not oldest then
-                    break
-                end
-
-                if tonumber(oldest) <= windowStart then
-                    redis.call('LPOP', key)
-                else
-                    break
-                end
-            end
-
-            local count = redis.call('LLEN', key)
-
-            -- Reject without adding the request
-            if count >= limit then
-                local oldest = redis.call('LINDEX', key, 0)
-                local reset = 0
-
-                if oldest then
-                    reset = tonumber(oldest) + window - now
-                end
-
-                return {0, count, reset}
-            end
-
-            -- Accept and record the request
-            redis.call('RPUSH', key, tostring(now))
-
-            count = count + 1
-
-            redis.call('PEXPIRE', key, window)
-
-            local remaining = limit - count
-            local reset = window
-
-            local oldest = redis.call('LINDEX', key, 0)
-
-            if oldest then
-                reset = tonumber(oldest) + window - now
-            end
-
-            return {1, count, reset}
-            """;
+    private final RedisScript<List> rateLimitScript;
 
     public RedisRateLimiter(
             StringRedisTemplate redisTemplate,
@@ -77,6 +29,21 @@ public class RedisRateLimiter {
 
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+
+        try {
+            String script =
+                    new ClassPathResource("scripts/rate_limit.lua")
+                            .getContentAsString(StandardCharsets.UTF_8);
+
+            this.rateLimitScript =
+                    new DefaultRedisScript<>(script, List.class);
+
+        } catch (IOException e) {
+            throw new IllegalStateException(
+                    "Failed to load rate limit Lua script",
+                    e
+            );
+        }
     }
 
     public RateLimitResult check(
@@ -90,7 +57,8 @@ public class RedisRateLimiter {
                 );
 
         int maxRequests = config.getMaxRequests();
-        long windowSizeMillis = config.getWindowSizeMillis();
+        long windowSizeMillis =
+                config.getWindowSizeMillis();
 
         long currentTime = System.currentTimeMillis();
 
@@ -100,14 +68,8 @@ public class RedisRateLimiter {
                         + ":"
                         + endpoint;
 
-        DefaultRedisScript<List> script =
-                new DefaultRedisScript<>(
-                        RATE_LIMIT_SCRIPT,
-                        List.class
-                );
-
         List result = redisTemplate.execute(
-                script,
+                rateLimitScript,
                 List.of(key),
                 String.valueOf(currentTime),
                 String.valueOf(windowSizeMillis),
@@ -115,30 +77,22 @@ public class RedisRateLimiter {
         );
 
         boolean allowed =
-                ((Long) result.get(0)) == 1L;
+                ((Number) result.get(0)).longValue() == 1;
 
-        long count =
-                (Long) result.get(1);
-
-        long resetMillis =
-                (Long) result.get(2);
+        int limit =
+                ((Number) result.get(1)).intValue();
 
         int remaining =
-                allowed
-                        ? maxRequests - (int) count
-                        : 0;
+                ((Number) result.get(2)).intValue();
 
-        long resetSeconds =
-                Math.max(
-                        0,
-                        (resetMillis + 999) / 1000
-                );
+        long resetAfterSeconds =
+                ((Number) result.get(3)).longValue() / 1000;
 
         return new RateLimitResult(
                 allowed,
-                maxRequests,
-                remaining,
-                resetSeconds
+                limit,
+                Math.max(remaining, 0),
+                resetAfterSeconds
         );
     }
 
