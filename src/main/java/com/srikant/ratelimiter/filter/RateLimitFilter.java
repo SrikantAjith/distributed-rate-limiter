@@ -1,5 +1,6 @@
 package com.srikant.ratelimiter.filter;
 
+import com.srikant.ratelimiter.metrics.RateLimitMetrics;
 import com.srikant.ratelimiter.limiter.RedisRateLimiter;
 import com.srikant.ratelimiter.model.RateLimitResult;
 import jakarta.servlet.FilterChain;
@@ -14,12 +15,21 @@ import java.io.IOException;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-
     private final RedisRateLimiter rateLimiter;
-    public RateLimitFilter(RedisRateLimiter rateLimiter) {
+    private final RateLimitMetrics metrics;
+
+    public RateLimitFilter(
+            RedisRateLimiter rateLimiter,
+            RateLimitMetrics metrics) {
+
         this.rateLimiter = rateLimiter;
+        this.metrics = metrics;
     }
 
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator/");
+    }
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -39,6 +49,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         RateLimitResult result =
                 rateLimiter.check(clientId, endpoint);
+
         response.setHeader(
                 "X-RateLimit-Limit",
                 String.valueOf(result.getLimit())
@@ -56,6 +67,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         if (!result.isAllowed()) {
 
+            metrics.recordRejected();
+
             response.setStatus(429);
 
             response.setHeader(
@@ -67,6 +80,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
             return;
         }
+
+        metrics.recordAllowed();
 
         filterChain.doFilter(request, response);
     }
