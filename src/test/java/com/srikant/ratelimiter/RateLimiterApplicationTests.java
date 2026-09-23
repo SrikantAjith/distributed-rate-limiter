@@ -71,4 +71,39 @@ class RateLimiterApplicationTests {
                 )
         );
     }
+
+
+
+    @Test
+    void shouldEnforceLimitForConcurrentRequests() throws Exception {
+
+        int requestCount = 10;
+
+        var executor =
+                java.util.concurrent.Executors.newFixedThreadPool(requestCount);
+
+        var futures =
+                java.util.stream.IntStream.range(0, requestCount)
+                        .mapToObj(i ->
+                                executor.submit(() ->
+                                        rateLimiter.check(
+                                                "concurrent-client",
+                                                endpoint
+                                        )
+                                )
+                        )
+                        .toList();
+
+        long allowedCount = 0;
+
+        for (var future : futures) {
+            if (future.get().isAllowed()) {
+                allowedCount++;
+            }
+        }
+
+        executor.shutdown();
+
+        assertEquals(3, allowedCount);
+    }
 }
