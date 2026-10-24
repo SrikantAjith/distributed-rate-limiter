@@ -1,3 +1,9 @@
+
 spring:
   application:
     name: rate-limiter
+
+  data:
+    redis:
+      timeout: 2s
+      connect-timeout: 2s

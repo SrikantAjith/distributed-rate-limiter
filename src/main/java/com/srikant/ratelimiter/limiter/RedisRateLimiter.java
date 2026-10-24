@@ -1,3 +1,4 @@
+
 package com.srikant.ratelimiter.limiter;
 
 import com.srikant.ratelimiter.config.EndpointRateLimit;
@@ -5,15 +6,16 @@ import com.srikant.ratelimiter.config.RateLimitProperties;
 import com.srikant.ratelimiter.model.RateLimitResult;
 
 import org.springframework.core.io.ClassPathResource;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisConnectionFailureException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Component
@@ -57,9 +59,7 @@ public class RedisRateLimiter {
                 );
 
         int maxRequests = config.getMaxRequests();
-        long windowSizeMillis =
-                config.getWindowSizeMillis();
-
+        long windowSizeMillis = config.getWindowSizeMillis();
         long currentTime = System.currentTimeMillis();
 
         String key =
@@ -68,13 +68,33 @@ public class RedisRateLimiter {
                         + ":"
                         + endpoint;
 
-        List result = redisTemplate.execute(
-                rateLimitScript,
-                List.of(key),
-                String.valueOf(currentTime),
-                String.valueOf(windowSizeMillis),
-                String.valueOf(maxRequests)
-        );
+        List result;
+
+        try {
+            result = redisTemplate.execute(
+                    rateLimitScript,
+                    List.of(key),
+                    String.valueOf(currentTime),
+                    String.valueOf(windowSizeMillis),
+                    String.valueOf(maxRequests)
+            );
+
+        } catch (QueryTimeoutException |
+                 RedisConnectionFailureException |
+                 RedisSystemException e) {
+
+            throw new RateLimiterUnavailableException(
+                    "Rate limiter is unavailable because Redis failed",
+                    e
+            );
+        }
+
+        if (result == null || result.size() < 4) {
+            throw new RateLimiterUnavailableException(
+                    "Rate limiter returned an invalid response",
+                    new IllegalStateException("Invalid Redis script result")
+            );
+        }
 
         boolean allowed =
                 ((Number) result.get(0)).longValue() == 1;
@@ -98,16 +118,10 @@ public class RedisRateLimiter {
 
     private EndpointRateLimit getDefaultConfig() {
 
-        EndpointRateLimit config =
-                new EndpointRateLimit();
+        EndpointRateLimit config = new EndpointRateLimit();
 
-        config.setMaxRequests(
-                properties.getMaxRequests()
-        );
-
-        config.setWindowSizeMillis(
-                properties.getWindowSizeMillis()
-        );
+        config.setMaxRequests(properties.getMaxRequests());
+        config.setWindowSizeMillis(properties.getWindowSizeMillis());
 
         return config;
     }

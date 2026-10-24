@@ -1,12 +1,16 @@
+
 package com.srikant.ratelimiter.filter;
 
-import com.srikant.ratelimiter.metrics.RateLimitMetrics;
+import com.srikant.ratelimiter.limiter.RateLimiterUnavailableException;
 import com.srikant.ratelimiter.limiter.RedisRateLimiter;
+import com.srikant.ratelimiter.metrics.RateLimitMetrics;
 import com.srikant.ratelimiter.model.RateLimitResult;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -30,6 +34,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return request.getRequestURI().startsWith("/actuator/");
     }
+
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -40,15 +45,28 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String clientId = request.getHeader("X-API-KEY");
 
         if (clientId == null || clientId.isBlank()) {
-            response.setStatus(400);
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            response.setContentType("text/plain;charset=UTF-8");
             response.getWriter().write("X-API-KEY header is required");
             return;
         }
 
         String endpoint = request.getRequestURI();
 
-        RateLimitResult result =
-                rateLimiter.check(clientId, endpoint);
+        RateLimitResult result;
+
+        try {
+            result = rateLimiter.check(clientId, endpoint);
+        } catch (RateLimiterUnavailableException e) {
+            response.setStatus(
+                    HttpServletResponse.SC_SERVICE_UNAVAILABLE
+            );
+            response.setContentType("text/plain;charset=UTF-8");
+            response.getWriter().write(
+                    "Rate limiter temporarily unavailable"
+            );
+            return;
+        }
 
         response.setHeader(
                 "X-RateLimit-Limit",
@@ -66,7 +84,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         );
 
         if (!result.isAllowed()) {
-
             metrics.recordRejected();
 
             response.setStatus(429);
@@ -76,8 +93,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
                     String.valueOf(result.getResetAfterSeconds())
             );
 
+            response.setContentType("text/plain;charset=UTF-8");
             response.getWriter().write("Rate limit exceeded");
-
             return;
         }
 

@@ -1,0 +1,48 @@
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: rate-limiter-redis
+    ports:
+      - "6379:6379"
+
+  rate-limiter-1:
+    build: .
+    container_name: rate-limiter-1
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    depends_on:
+      - redis
+
+  rate-limiter-2:
+    build: .
+    container_name: rate-limiter-2
+    ports:
+      - "8081:8080"
+    environment:
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    depends_on:
+      - redis
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rate-limiter-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - rate-limiter-1
+      - rate-limiter-2
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rate-limiter-grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
